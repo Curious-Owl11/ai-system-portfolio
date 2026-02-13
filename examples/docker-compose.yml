@@ -1,0 +1,258 @@
+# =============================================================================
+# DOCKER STACK — Local AI Development Environment (Sanitised Example)
+# =============================================================================
+# Core (auto-start):  docker compose up -d
+# All services:       docker compose --profile optional up -d
+# One optional:       docker compose up -d <service>
+# =============================================================================
+
+services:
+  # ---------------------------------------------------------------------------
+  # TRAEFIK — Reverse Proxy (*.localhost routing)
+  # ---------------------------------------------------------------------------
+  traefik:
+    image: traefik:v3.6
+    container_name: traefik
+    restart: unless-stopped
+    command:
+      - "--api.dashboard=true"
+      - "--api.insecure=true"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--providers.docker.network=proxy"
+      - "--entrypoints.web.address=:80"
+    ports:
+      - "80:80"
+      - "8080:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - proxy
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.dashboard.rule=Host(`traefik.localhost`)"
+      - "traefik.http.routers.dashboard.service=api@internal"
+
+  # ---------------------------------------------------------------------------
+  # NEO4J — Knowledge Graph + Vector Store
+  # ---------------------------------------------------------------------------
+  neo4j:
+    image: neo4j:5-community
+    container_name: neo4j
+    ports:
+      - "7687:7687"
+    environment:
+      - NEO4J_AUTH=${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD:-changeme}
+      - NEO4J_PLUGINS=["apoc"]
+      - NEO4J_dbms_security_procedures_unrestricted=apoc.*
+    volumes:
+      - neo4j_data:/data
+      - neo4j_logs:/logs
+    restart: unless-stopped
+    networks:
+      - internal
+      - proxy
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.neo4j.rule=Host(`neo4j.localhost`)"
+      - "traefik.http.services.neo4j.loadbalancer.server.port=7474"
+
+  # ---------------------------------------------------------------------------
+  # POSTGRESQL — Relational DB
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    container_name: postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-appuser}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+      POSTGRES_DB: ${POSTGRES_DB:-appdb}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-appuser}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ---------------------------------------------------------------------------
+  # MAILPIT — Local Email Catcher (Dev)
+  # ---------------------------------------------------------------------------
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: mailpit
+    restart: unless-stopped
+    volumes:
+      - mailpit_data:/data
+    environment:
+      MP_DATABASE: /data/mailpit.db
+      TZ: ${TIMEZONE:-UTC}
+    networks:
+      - internal
+      - proxy
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.mailpit.rule=Host(`mail.localhost`)"
+      - "traefik.http.services.mailpit.loadbalancer.server.port=8025"
+
+  # ===========================================================================
+  # OPTIONAL SERVICES — start with --profile optional
+  # ===========================================================================
+
+  # ---------------------------------------------------------------------------
+  # OLLAMA — Local LLMs
+  # ---------------------------------------------------------------------------
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    profiles: ["optional"]
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    restart: unless-stopped
+    networks:
+      - internal
+
+  # ---------------------------------------------------------------------------
+  # OPEN WEBUI — Chat Interface for Ollama
+  # ---------------------------------------------------------------------------
+  openwebui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: openwebui
+    profiles: ["optional"]
+    volumes:
+      - openwebui_data:/app/backend/data
+    environment:
+      OLLAMA_BASE_URL: http://ollama:11434
+    depends_on:
+      - ollama
+    restart: unless-stopped
+    networks:
+      - internal
+      - proxy
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.openwebui.rule=Host(`chat.localhost`)"
+      - "traefik.http.services.openwebui.loadbalancer.server.port=8080"
+
+  # ---------------------------------------------------------------------------
+  # ANYTHINGLLM — RAG + Agents
+  # ---------------------------------------------------------------------------
+  anythingllm:
+    image: mintplexlabs/anythingllm:latest
+    container_name: anythingllm
+    profiles: ["optional"]
+    volumes:
+      - anythingllm_data:/app/server/storage
+    environment:
+      STORAGE_DIR: /app/server/storage
+      LLM_PROVIDER: ollama
+      OLLAMA_BASE_PATH: http://ollama:11434
+      EMBEDDING_ENGINE: ollama
+      EMBEDDING_MODEL_PREF: nomic-embed-text
+      VECTOR_DB: lancedb
+    depends_on:
+      - ollama
+    restart: unless-stopped
+    networks:
+      - internal
+      - proxy
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.anythingllm.rule=Host(`rag.localhost`)"
+      - "traefik.http.services.anythingllm.loadbalancer.server.port=3001"
+
+  # ---------------------------------------------------------------------------
+  # N8N — Workflow Automation
+  # ---------------------------------------------------------------------------
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: n8n
+    profiles: ["optional"]
+    environment:
+      - N8N_HOST=n8n.localhost
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
+      - WEBHOOK_URL=http://n8n.localhost/
+      - GENERIC_TIMEZONE=${TIMEZONE:-UTC}
+      - N8N_SECURE_COOKIE=false
+      - DB_TYPE=postgresdb
+      - DB_POSTGRESDB_HOST=postgres
+      - DB_POSTGRESDB_PORT=5432
+      - DB_POSTGRESDB_DATABASE=${POSTGRES_DB:-appdb}
+      - DB_POSTGRESDB_USER=${POSTGRES_USER:-appuser}
+      - DB_POSTGRESDB_PASSWORD=${POSTGRES_PASSWORD:-changeme}
+    volumes:
+      - n8n_data:/home/node/.n8n
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - internal
+      - proxy
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.n8n.rule=Host(`n8n.localhost`)"
+      - "traefik.http.services.n8n.loadbalancer.server.port=5678"
+
+  # ---------------------------------------------------------------------------
+  # WHISPER — Speech-to-Text
+  # ---------------------------------------------------------------------------
+  whisper:
+    image: onerahmet/openai-whisper-asr-webservice:latest
+    container_name: whisper
+    profiles: ["optional"]
+    environment:
+      - ASR_MODEL=base
+      - ASR_ENGINE=openai_whisper
+    restart: unless-stopped
+    networks:
+      - internal
+      - proxy
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.whisper.rule=Host(`whisper.localhost`)"
+      - "traefik.http.services.whisper.loadbalancer.server.port=9000"
+
+  # ---------------------------------------------------------------------------
+  # TTS — Text-to-Speech
+  # ---------------------------------------------------------------------------
+  tts:
+    image: ghcr.io/matatonic/openedai-speech:latest
+    container_name: tts
+    profiles: ["optional"]
+    volumes:
+      - tts_data:/app/voices
+    restart: unless-stopped
+    networks:
+      - internal
+      - proxy
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.tts.rule=Host(`tts.localhost`)"
+      - "traefik.http.services.tts.loadbalancer.server.port=8000"
+
+volumes:
+  neo4j_data:
+  neo4j_logs:
+  postgres_data:
+  n8n_data:
+  ollama_data:
+  openwebui_data:
+  anythingllm_data:
+  tts_data:
+  mailpit_data:
+
+networks:
+  internal:
+    driver: bridge
+  proxy:
+    name: proxy
+    driver: bridge
