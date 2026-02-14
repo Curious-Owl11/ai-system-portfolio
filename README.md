@@ -68,6 +68,15 @@ graph TB
 | Serverless ETL | Modal pipelines: R2 → parse → embed → Neo4j/Neon/MotherDuck | [Infrastructure](architecture/infrastructure.md#serverless-etl) |
 | Secrets Management | Infisical as single source of truth, deploy-time injection | [Key Decisions](decisions/key-decisions.md#secrets-management) |
 
+## Case Studies
+
+| Case Study | What It Covers |
+|-----------|---------------|
+| [Tiered Agent Crew](case-studies/tiered-agent-crew.md) | Building an autonomous agent crew with model-matched tiers and label-based escalation |
+| [Wilderness Lab](case-studies/wilderness-lab.md) | Multi-agent epistemological experiments — four thinking styles debating in structured protocols |
+| [Knowledge Graph RAG](case-studies/knowledge-graph-rag.md) | Hybrid graph + vector retrieval in Neo4j — semantic search with relationship context |
+| [Agent Memory](case-studies/agent-memory.md) | Giving agents persistent operational memory with FAISS + SQLite for cross-session learning |
+
 ## Design Philosophy
 
 **Local-first, cloud-augmented.** The core development environment runs entirely on a single machine — knowledge graph, LLMs, reverse proxy, databases. Cloud services (Modal, R2, Infisical) handle what local can't: serverless compute, durable storage, and secrets management.
@@ -116,6 +125,11 @@ ai-system-portfolio/
 │   ├── agent-system.md             # Multi-agent design deep-dive
 │   ├── infrastructure.md           # Docker stack & cloud services
 │   └── knowledge-graph.md          # Neo4j design & patterns
+├── case-studies/
+│   ├── tiered-agent-crew.md        # Building the agent crew
+│   ├── wilderness-lab.md           # Multi-agent experiments
+│   ├── knowledge-graph-rag.md      # Hybrid graph + vector retrieval
+│   └── agent-memory.md             # Persistent agent memory
 ├── examples/
 │   ├── docker-compose.yml          # Sanitised infrastructure config
 │   ├── escalation-flow.md          # Real escalation walkthrough
